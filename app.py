@@ -4,38 +4,17 @@ import json
 import re
 import os
 
-CONFIG_PATH = "config.json"
+st.set_page_config(page_title="D&D Scene Generator", page_icon="⚔️")
 
-def load_api_key():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f).get("api_key", "")
-    return ""
-
-def save_api_key(key: str):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump({"api_key": key}, f)
-
-old_key = load_api_key()
-
-api_key = st.text_input(
-    "Gemini API Key",
-    value=old_key,
-    type="password"
-)
-
-if api_key and api_key != old_key:
-    save_api_key(api_key)
-
-if not api_key:
-    st.warning("API key required")
+try:
+    api_key = st.secrets["API_KEY"]
+except Exception:
+    st.error("Missing API key. Add it in Streamlit Secrets as API_KEY.")
     st.stop()
 
 client = genai.Client(api_key=api_key)
 
 MODEL = "gemini-3.5-flash"
-
-st.set_page_config(page_title="D&D Scene Generator", page_icon="⚔️")
 
 st.markdown("""
 <style>
@@ -259,23 +238,23 @@ Max 2 sensory signals per paragraph.
 </voice>"""
 
     objective = """<objective>
-    Goal: produce a physically grounded D&D scene spoken by a dungeon master.
+Goal: produce a physically grounded D&D scene spoken by a dungeon master.
 
-    Constraints hierarchy:
-    1. physical realism > style
-    2. sensory clarity > prose
-    3. world consistency > novelty
+Constraints hierarchy:
+1. physical realism > style
+2. sensory clarity > prose
+3. world consistency > novelty
 
-    Rules:
-    - exactly 3 paragraphs
-    - every paragraph must contain a physical cause → sensory effect chain
-    - no abstract narration
-    - no symbolic interpretation
-    - no poetic omniscient narration
-    - world state is probabilistic but should remain consistent unless physically changed
-    - do not escalate violence beyond the user input.
-    - keep violence implied through consequences unless explicitly requested.
-    </objective>"""
+Rules:
+- exactly 3 paragraphs
+- every paragraph must contain a physical cause → sensory effect chain
+- no abstract narration
+- no symbolic interpretation
+- no poetic omniscient narration
+- world state is probabilistic but should remain consistent unless physically changed
+- do not escalate violence beyond the user input.
+- keep violence implied through consequences unless explicitly requested.
+</objective>"""
 
     return f"""{config}
 
@@ -320,9 +299,9 @@ with col4:
     pacing = st.selectbox("Темп", list(PACING_MAP.keys()))
 with col5:
     focus = st.selectbox(
-    "Фокус",
-    ["Середовище","Істоти","Таємниця","Виживання","Насилля","Лор","Емоція"]
-)
+        "Фокус",
+        ["Середовище","Істоти","Таємниця","Виживання","Насилля","Лор","Емоція"]
+    )
 
 col_gen, col_regen = st.columns(2)
 run = False
@@ -351,4 +330,3 @@ if run:
 
 if st.session_state.current_scene:
     st.markdown(st.session_state.current_scene)
-
