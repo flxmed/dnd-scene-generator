@@ -6,13 +6,24 @@ import os
 
 st.set_page_config(page_title="D&D Scene Generator", page_icon="⚔️")
 
-try:
-    api_key = st.secrets["API_KEY"]
-except Exception:
-    st.error("Missing API key. Add it in Streamlit Secrets as API_KEY.")
+
+if "api_key" not in st.session_state:
+    st.session_state.api_key = ""
+
+api_key = st.text_input(
+    "Enter your Gemini API Key",
+    type="password",
+    value=st.session_state.api_key
+)
+
+if api_key:
+    st.session_state.api_key = api_key
+
+if not st.session_state.api_key:
+    st.warning("API key required to continue")
     st.stop()
 
-client = genai.Client(api_key=api_key)
+client = genai.Client(api_key=st.session_state.api_key)
 
 MODEL = "gemini-3.5-flash"
 
