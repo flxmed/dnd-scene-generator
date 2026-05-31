@@ -11,7 +11,7 @@ if "api_key" not in st.session_state:
     st.session_state.api_key = ""
 
 api_key = st.text_input(
-    "Enter your Gemini API Key",
+    "Gemini API Key",
     type="password",
     value=st.session_state.api_key
 )
