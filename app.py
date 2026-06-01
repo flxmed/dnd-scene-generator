@@ -2,7 +2,7 @@ import streamlit as st
 from google import genai
 import json
 import re
-import os
+import time
 
 st.set_page_config(page_title="D&D Scene Generator", page_icon="⚔️")
 
@@ -214,8 +214,7 @@ def extract_entities(scene: str) -> dict:
         except:
             return {}
 
-    except Exception as e:
-        st.warning(f"Entity extraction failed: {e}")
+    except Exception:
         return {}
 
 
@@ -283,8 +282,22 @@ Rules:
 
 def generate_scene(location, tone, intensity, pacing, focus, language, world):
     prompt = build_prompt(location, tone, intensity, pacing, focus, language, world)
-    resp = client.models.generate_content(model=MODEL, contents=prompt)
-    return resp.text or ""
+
+    last_error = None
+
+    for _ in range(3):
+        try:
+            resp = client.models.generate_content(
+                model=MODEL,
+                contents=prompt
+            )
+            return resp.text or ""
+
+        except Exception as e:
+            last_error = e
+            time.sleep(2)
+
+    raise last_error
 
 
 if "world" not in st.session_state:
@@ -328,15 +341,31 @@ with col_regen:
 
 if run:
     with st.spinner("Generating..."):
-        scene = generate_scene(location, tone, intensity, pacing, focus, language, st.session_state.world)
+        try:
+            scene = generate_scene(
+                location,
+                tone,
+                intensity,
+                pacing,
+                focus,
+                language,
+                st.session_state.world
+            )
 
-        st.session_state.current_scene = scene
-        st.session_state.scenes.append({"input": location, "scene": scene})
+            st.session_state.current_scene = scene
+            st.session_state.scenes.append(
+                {"input": location, "scene": scene}
+            )
 
-        st.session_state.world.scene_count += 1
+            st.session_state.world.scene_count += 1
 
-        entity_json = extract_entities(scene)
-        st.session_state.world.update_from_scene(entity_json)
+            entity_json = extract_entities(scene)
+            st.session_state.world.update_from_scene(entity_json)
+
+        except Exception:
+            st.error(
+                "Gemini is temporarily unavailable. Please try again in a few seconds."
+            )
 
 
 if st.session_state.current_scene:
