@@ -1,3 +1,4 @@
+import random
 import streamlit as st
 from google import genai
 import json
@@ -6,9 +7,11 @@ import time
 
 st.set_page_config(page_title="D&D Scene Generator", page_icon="⚔️")
 
-
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
+
+if "is_generating" not in st.session_state:
+    st.session_state.is_generating = False
 
 api_key = st.text_input(
     "Gemini API Key",
@@ -94,11 +97,13 @@ class WorldState:
             return ""
 
         lines = []
-        for entity, data in self.entities.items():
+        for i, (entity, data) in enumerate(self.entities.items()):
+            if i > 20:
+                break
+
             state = data.get("state", "unknown")
             trend = data.get("trend", "unknown")
-            line = f"  {entity}.state = {state}, trend = {trend}"
-            lines.append(line)
+            lines.append(f"  {entity}.state = {state}, trend = {trend}")
 
         return "WORLD_STATE:\n" + "\n".join(lines)
 
@@ -164,7 +169,6 @@ PACING_MAP = {
     "Швидко": "fast",
 }
 
-
 EXTRACTION_PROMPT = """Extract named entities from this D&D scene description.
 Return ONLY valid JSON.
 
@@ -178,7 +182,6 @@ If none: return {}.
 SCENE:
 """
 
-
 def _normalize_entities(data: dict) -> dict:
     cleaned = {}
     for k, v in data.items():
@@ -189,34 +192,37 @@ def _normalize_entities(data: dict) -> dict:
             }
     return cleaned
 
-
 def extract_entities(scene: str) -> dict:
-    try:
-        resp = client.models.generate_content(
-            model=MODEL,
-            contents=EXTRACTION_PROMPT + scene,
-        )
-
-        raw = (resp.text or "").strip()
-
+    for attempt in range(3):
         try:
-            return _normalize_entities(json.loads(raw))
-        except:
-            pass
+            resp = client.models.generate_content(
+                model=MODEL,
+                contents=EXTRACTION_PROMPT + scene,
+            )
 
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start == -1 or end == -1:
-            return {}
+            raw = (resp.text or "").strip()
 
-        try:
-            return _normalize_entities(json.loads(raw[start:end+1]))
-        except:
-            return {}
+            try:
+                return _normalize_entities(json.loads(raw))
+            except:
+                pass
 
-    except Exception:
-        return {}
+            start = raw.find("{")
+            end = raw.rfind("}")
 
+            if start == -1 or end == -1:
+                return {}
+
+            try:
+                return _normalize_entities(json.loads(raw[start:end + 1]))
+            except:
+                return {}
+
+        except Exception:
+            if attempt < 2:
+                time.sleep(3)
+
+    return {}
 
 def build_prompt(location: str, tone: str, intensity: str, pacing: str,
                  focus: str, language: str, world: WorldState) -> str:
@@ -279,34 +285,69 @@ Rules:
 <input>{location}</input>
 """
 
+def build_light_prompt(location, tone, intensity, pacing, focus, language, world):
+    world_block = world.to_prompt_block()
+
+    return f"""
+Write a D&D scene.
+
+Rules:
+- 3 paragraphs
+- simple language
+- no strict constraints
+- no extra formatting rules
+
+Location: {location}
+Tone: {tone}
+Language: {language}
+
+{world_block}
+"""
 
 def generate_scene(location, tone, intensity, pacing, focus, language, world):
-    prompt = build_prompt(location, tone, intensity, pacing, focus, language, world)
+    heavy_prompt = build_prompt(location, tone, intensity, pacing, focus, language, world)
+    light_prompt = build_light_prompt(location, tone, intensity, pacing, focus, language, world)
 
     last_error = None
 
-    for _ in range(3):
+    for attempt in range(6):
         try:
+            prompt = heavy_prompt if attempt < 3 else light_prompt
+
             resp = client.models.generate_content(
                 model=MODEL,
                 contents=prompt
             )
-            return resp.text or ""
+
+            if not resp or not getattr(resp, "text", None):
+                raise RuntimeError("Empty response")
+
+            return resp.text
 
         except Exception as e:
             last_error = e
-            time.sleep(2)
+            msg = str(e)
+
+            if "503" in msg or "UNAVAILABLE" in msg or "overloaded" in msg.lower():
+                time.sleep(min(10, 2 ** attempt))
+                continue
+
+            raise e
 
     raise last_error
 
 
 if "world" not in st.session_state:
     st.session_state.world = WorldState()
+
 if "scenes" not in st.session_state:
     st.session_state.scenes = []
+
 if "current_scene" not in st.session_state:
     st.session_state.current_scene = ""
 
+if "is_generating" not in st.session_state:
+    st.session_state.is_generating = False
 
 location = st.text_area("Ідея локації")
 
@@ -328,6 +369,7 @@ with col5:
     )
 
 col_gen, col_regen = st.columns(2)
+
 run = False
 
 with col_gen:
@@ -338,10 +380,16 @@ with col_regen:
     if st.button("Регенерувати"):
         run = bool(st.session_state.current_scene and location.strip())
 
+SCENE_FALLBACK = "The scene collapses into silence. Nothing stable forms."
 
 if run:
-    with st.spinner("Generating..."):
-        try:
+    if st.session_state.is_generating:
+        st.stop()
+
+    st.session_state.is_generating = True
+
+    try:
+        with st.spinner("Generating..."):
             scene = generate_scene(
                 location,
                 tone,
@@ -352,21 +400,21 @@ if run:
                 st.session_state.world
             )
 
-            st.session_state.current_scene = scene
-            st.session_state.scenes.append(
-                {"input": location, "scene": scene}
-            )
+        st.session_state.current_scene = scene
 
-            st.session_state.world.scene_count += 1
+        if scene == SCENE_FALLBACK:
+            entities = {}
+        else:
+            entities = extract_entities(scene) if scene != SCENE_FALLBACK else {}
 
-            entity_json = extract_entities(scene)
-            st.session_state.world.update_from_scene(entity_json)
+        if entities:
+            st.session_state.world.update_from_scene(entities)
 
-        except Exception:
-            st.error(
-                "Gemini is temporarily unavailable. Please try again in a few seconds."
-            )
+    except Exception as e:
+        st.error(str(e))
 
+    finally:
+        st.session_state.is_generating = False
 
 if st.session_state.current_scene:
     st.markdown(st.session_state.current_scene)
